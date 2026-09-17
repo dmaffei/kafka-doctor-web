@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """kdproxy.py — Kafka-aware TCP relay for kafka-doctor-web (flexible v9+ aware)."""
-import socket, struct, threading, time, collections
+import socket, struct, threading, time, collections, os
 
 API_NAMES = {0:"Produce",1:"Fetch",2:"ListOffsets",3:"Metadata",8:"OffsetCommit",
              9:"OffsetFetch",10:"FindCoordinator",11:"JoinGroup",12:"Heartbeat",
@@ -70,13 +70,21 @@ class Proxy:
         self.adv_host = advertise_host
         self.events = collections.deque(maxlen=log_size)
         self.lock = threading.Lock()
+        self.logfile = os.environ.get("KD_PROXY_LOG", "/data/proxy-feed.log")
         self._srv = None; self._thread = None
         self.running = False; self.started_at = None; self.conns = 0
         self.pending = {}
 
     def log(self, direction, kind, detail):
+        ev = {"t": round(time.time(),3), "dir": direction, "kind": kind, "detail": detail}
         with self.lock:
-            self.events.append({"t": round(time.time(),3), "dir": direction, "kind": kind, "detail": detail})
+            self.events.append(ev)
+        try:
+            os.makedirs(os.path.dirname(self.logfile), exist_ok=True)
+            with open(self.logfile, "a") as f:
+                f.write(f"{ev['t']}  {ev['dir']:4} {ev['kind']:14} {ev['detail']}\n")
+        except Exception:
+            pass  # persistence must never break the relay
 
     def snapshot(self, since=0):
         with self.lock: evs = list(self.events)
@@ -363,3 +371,6 @@ def proxy_status():
 
 def proxy_events(since=0.0):
     return _proxy.snapshot(since) if _proxy else []
+
+def proxy_logfile_path():
+    return _proxy.logfile if _proxy else os.environ.get("KD_PROXY_LOG", "/data/proxy-feed.log")

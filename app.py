@@ -247,8 +247,23 @@ def api_proxy_status():
     return kdproxy.proxy_status()
 
 @app.get("/api/proxy/events")
-def api_proxy_events(since: float = 0.0):
-    return {"events": kdproxy.proxy_events(since)}
+def api_proxy_events(since: float = 0.0, format: str = "json"):
+    evs = kdproxy.proxy_events(since)
+    if format == "text":
+        lines = [f"{e['t']}  {e['dir']:4} {e['kind']:14} {e['detail']}" for e in evs]
+        return PlainTextResponse("\n".join(lines) + ("\n" if lines else ""))
+    return {"events": evs}
+
+@app.get("/api/proxy/logfile", response_class=PlainTextResponse)
+def api_proxy_logfile(tail: int = 500):
+    """Retrieve the persisted proxy decoded-feed log (survives across relay
+    restarts within the container's /data volume)."""
+    try:
+        with open(kdproxy.proxy_logfile_path()) as f:
+            lines = f.readlines()
+        return "".join(lines[-tail:]) or "(proxy log empty)"
+    except FileNotFoundError:
+        return "(no proxy log yet — start the relay first)"
 
 @app.get("/api/log", response_class=PlainTextResponse)
 def api_log(tail: int = 200):
