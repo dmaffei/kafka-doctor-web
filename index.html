@@ -44,9 +44,37 @@
 <header>
   <h1><span class="k">kafka</span>-doctor <span style="color:var(--mut);font-weight:400">web</span></h1>
   <span class="sub">test Kafka connectivity &amp; produce/consume from this host</span>
-  <a class="tab" onclick="showLog()">view write log →</a>
+  <a class="tab" onclick="toggleHelp()" style="margin-left:auto">? help</a>
+  <a class="tab" onclick="showLog()" style="margin-left:12px">view write log →</a>
 </header>
 <main>
+  <div id="help" style="display:none;position:fixed;inset:0;background:rgba(5,10,16,.85);z-index:100;overflow:auto;padding:32px 16px" onclick="if(event.target.id==='help')toggleHelp()">
+    <div style="max-width:760px;margin:0 auto;background:#16212e;border:1px solid #243447;border-radius:12px;padding:24px 28px">
+      <div style="display:flex;align-items:center;margin-bottom:8px">
+        <h2 style="margin:0;color:#6ec546;font-size:18px">What this tool does</h2>
+        <button type="button" onclick="toggleHelp()" style="margin-left:auto;background:#0d1622;border:1px solid #243447;color:#e6edf3;border-radius:7px;padding:6px 12px;cursor:pointer">close ✕</button>
+      </div>
+      <p style="color:#8aa0b4;font-size:13px;margin-top:0">Test Kafka connectivity and data flow <b>from this host</b> — the same network position your producer (e.g. the AI Streamer) sits in. Enter a broker <code>host:port</code> at the top; every test runs against it. Topic names are case-sensitive (<code>omnis.dns</code> ≠ <code>OMNIS.dns</code>).</p>
+      <div style="font-size:13px;line-height:1.6">
+        <p><b style="color:#6ec546">Connectivity &amp; firewall path</b><br>
+        Is the broker reachable, and does the handshake work? <b>connect</b> walks it stage-by-stage (DNS → TCP → Kafka handshake → metadata → advertised broker) and shows exactly where it breaks. <b>health</b> reports plaintext vs TLS and broker basics. <b>tcp probe</b> tells timeout (firewall/return-path) from refused (nothing listening). Start here when nothing connects.</p>
+
+        <p><b style="color:#6ec546">Topic inspection</b><br>
+        Look inside a topic. <b>trace</b> answers "did my writes land / why is it empty"; <b>freshness</b> shows if data is arriving right now; <b>topic/config/size</b> show partitions, settings, and message-size limits; <b>consume</b> reads a few records; <b>poison</b> scans for malformed ones. <b>check case</b> finds a same-name/different-case topic holding your data — the classic "topic looks empty" trap.</p>
+
+        <p><b style="color:#6ec546">Consumer groups</b><br>
+        <b>groups</b> lists all consumer groups and whether they're alive (Empty = consumer down). <b>lag</b> shows how far behind a group is — 0 lag means it's caught up, so "missing" data downstream is not a lag problem.</p>
+
+        <p><b style="color:#6ec546">Write tests</b> <span style="color:#e0a030">(these write real records, and are logged)</span><br>
+        <b>produce-test</b> writes one record and verifies it landed. <b>codec</b> round-trips a chosen compression (none/gzip/lz4/snappy/zstd) to confirm the broker accepts it. <b>simulate</b> sends N AI-Streamer-format records to a <code>*-test</code> topic. Use these to prove the write path works end-to-end.</p>
+
+        <p><b style="color:#6ec546">Kafka relay / proxy</b><br>
+        The deep-dive tool. <b>start relay</b> opens a listening port; point your producer's <code>bootstrap.servers</code> at <code>&lt;this host&gt;:&lt;listen port&gt;</code> and it forwards to the real broker while <b>decoding the live conversation</b>: every ApiVersions/Metadata/Produce/Fetch, the advertised addresses the broker returns, produce topics, compression codec, acks, response error codes, and latency. <b>stats</b> gives per-topic produce counts/bytes/errors. <b>open log</b> shows the feed in its own window with <b>handshake / transfer</b> filters — so you can tell whether a "no data" problem is in the connection handshake or the actual message transfer. This is how you catch advertised-listener traps, silent produce rejections, and "connected but never producing".</p>
+      </div>
+      <p style="color:#8aa0b4;font-size:12px;margin-bottom:0">Results appear in the output box at the bottom. No auth (lab use) — don't expose port 8899 to untrusted networks.</p>
+    </div>
+  </div>
+
   <div class="bar">
     <div class="fld" style="flex:1">
       <label>Kafka bootstrap (host:port)</label>
@@ -337,6 +365,8 @@ async function pollFeed(){
   }
  }catch(e){ /* keep polling */ }
 }
+
+function toggleHelp(){ const h=document.getElementById('help'); h.style.display = (h.style.display==='none'||!h.style.display) ? 'block' : 'none'; }
 
 async function showLog(){
   setOut('loading write log …');
