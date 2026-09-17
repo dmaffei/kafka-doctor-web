@@ -24,6 +24,7 @@ from typing import Optional
 from fastapi import FastAPI, Query, Body
 from fastapi.responses import HTMLResponse, PlainTextResponse
 import kdx
+import kdproxy
 
 DOCTOR = os.environ.get("KD_DOCTOR", "/app/kafka_doctor.py")
 PORT = int(os.environ.get("KD_PORT", "8899"))
@@ -214,6 +215,31 @@ def api_connectprobe(bootstrap: str = Query(None)):
         return kdx.connect_probe(_bootstrap(bootstrap))
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+@app.post("/api/proxy/start")
+def api_proxy_start(payload: dict = Body(default={})):
+    """Start the Kafka-aware relay. Point the streamer's bootstrap at this
+    proxy's port; it relays to `upstream` and decodes the exchange."""
+    upstream = payload.get("upstream") or DEFAULT_BOOTSTRAP
+    listen_port = int(payload.get("listen_port", 9099))
+    advertise_host = payload.get("advertise_host") or _self_host()
+    r = kdproxy.start_proxy(listen_port, upstream, advertise_host)
+    _audit(f"PROXY start listen={listen_port} upstream={upstream} advertise={advertise_host} ok={r.get('ok')}")
+    return r
+
+@app.post("/api/proxy/stop")
+def api_proxy_stop():
+    r = kdproxy.stop_proxy()
+    _audit("PROXY stop")
+    return r
+
+@app.get("/api/proxy/status")
+def api_proxy_status():
+    return kdproxy.proxy_status()
+
+@app.get("/api/proxy/events")
+def api_proxy_events(since: float = 0.0):
+    return {"events": kdproxy.proxy_events(since)}
 
 @app.get("/api/log", response_class=PlainTextResponse)
 def api_log(tail: int = 200):

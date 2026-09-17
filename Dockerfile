@@ -20,6 +20,7 @@ RUN pip install --no-cache-dir \
 COPY kafka_doctor.py /app/kafka_doctor.py
 COPY app.py          /app/app.py
 COPY kdx.py          /app/kdx.py
+COPY kdproxy.py      /app/kdproxy.py
 COPY index.html      /app/index.html
 
 ENV KD_PORT=8899 \

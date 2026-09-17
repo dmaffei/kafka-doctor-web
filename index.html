@@ -118,6 +118,23 @@
     </div>
   </div>
 
+  <div class="grp">
+    <h2>Kafka relay / proxy <span class="sub">— point the streamer's bootstrap here to watch the exchange</span></h2>
+    <div class="write-zone">
+      <div class="note">⚠ Starts a listening relay. Set the AI Streamer bootstrap.servers to &lt;this-host&gt;:&lt;listen port&gt;. The relay forwards to the upstream broker and decodes the conversation live below. Plaintext, single-broker.</div>
+      <div class="row">
+        <div class="fld"><label>upstream broker (real)</label><input id="pxup" value="192.168.30.32:9092"/></div>
+        <div class="fld"><label>listen port</label><input id="pxport" value="9099" style="min-width:80px"/></div>
+        <div class="fld"><label>advertise host (blank=auto)</label><input id="pxadv" value="" placeholder="this host's IP" style="min-width:140px"/></div>
+        <button type="button" class="write" onclick="proxyStart()">start relay</button>
+        <button type="button" onclick="proxyStop()">stop</button>
+        <button type="button" onclick="proxyStatus()">status</button>
+      </div>
+      <div id="pxstatus" class="hint" style="margin-top:6px">relay stopped.</div>
+      <div id="pxfeed" style="margin-top:8px;max-height:280px;overflow:auto;background:#0a1119;border:1px solid var(--line);border-radius:8px;padding:10px;font:11.5px/1.5 var(--mono);white-space:pre-wrap"></div>
+    </div>
+  </div>
+
   <div id="out">Ready. Enter a bootstrap and click a check.
 Tip: for firewall validation, run <b>connect</b> first — it walks DNS → TCP → handshake → metadata → advertised-broker, and shows exactly which stage fails.</div>
 </main>
@@ -201,6 +218,48 @@ function render(cmd,j){
   if(j.stderr){ body += '\n\n[stderr]\n'+j.stderr; }
   if(j.parse_error){ body += '\n\n[parse_error] '+j.parse_error; }
   setOut(head+body);
+}
+
+let _pxTimer=null, _pxSince=0;
+async function proxyStart(){
+ try{
+  const body={upstream:$('pxup').value.trim(), listen_port:parseInt($('pxport').value)||9099};
+  const adv=$('pxadv').value.trim(); if(adv){ body.advertise_host=adv; }
+  const r=await fetch('/api/proxy/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const j=await r.json();
+  proxyRenderStatus(j.status||{}, j.ok?'started':('start failed: '+(j.error||'')));
+  if(j.ok){ _pxSince=0; document.getElementById('pxfeed').textContent=''; startFeed(); }
+ }catch(e){ $('pxstatus').textContent='start error: '+e; }
+}
+async function proxyStop(){
+ try{ const r=await fetch('/api/proxy/stop',{method:'POST'}); const j=await r.json();
+  proxyRenderStatus(j.status||{}, 'stopped'); stopFeed(); }
+ catch(e){ $('pxstatus').textContent='stop error: '+e; }
+}
+async function proxyStatus(){
+ try{ const r=await fetch('/api/proxy/status'); const j=await r.json(); proxyRenderStatus(j,''); }
+ catch(e){ $('pxstatus').textContent='status error: '+e; }
+}
+function proxyRenderStatus(st, note){
+ const s=st.running?('RUNNING  :'+st.listen_port+' → '+st.upstream+'  (advertise '+st.advertise_host+')  conns='+st.connections+'  up '+st.uptime_s+'s'):'stopped';
+ $('pxstatus').textContent=(note?note+'  —  ':'')+s;
+}
+function startFeed(){ stopFeed(); _pxTimer=setInterval(pollFeed, 1000); }
+function stopFeed(){ if(_pxTimer){ clearInterval(_pxTimer); _pxTimer=null; } }
+async function pollFeed(){
+ try{
+  const r=await fetch('/api/proxy/events?since='+_pxSince);
+  const j=await r.json(); const evs=j.events||[];
+  if(evs.length){
+    const feed=document.getElementById('pxfeed');
+    for(const e of evs){
+      _pxSince=Math.max(_pxSince, e.t);
+      const dir=e.dir==='C→B'?'▶ C→B':(e.dir==='B→C'?'◀ B→C':'  •  ');
+      feed.textContent += dir+'  '+e.detail+'\n';
+    }
+    feed.scrollTop=feed.scrollHeight;
+  }
+ }catch(e){ /* keep polling */ }
 }
 
 async function showLog(){
