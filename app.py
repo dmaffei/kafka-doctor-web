@@ -104,6 +104,15 @@ def run_doctor(subcmd: str, bootstrap: str, extra: Optional[list] = None,
 
 
 # ---------- REST: read endpoints ----------
+def _self_host():
+    """Best-effort IP the streamer should use to reach this proxy."""
+    import socket as _s
+    try:
+        x = _s.socket(_s.AF_INET, _s.SOCK_DGRAM); x.connect(("8.8.8.8", 80))
+        ip = x.getsockname()[0]; x.close(); return ip
+    except Exception:
+        return "127.0.0.1"
+
 def _bootstrap(q): return q or DEFAULT_BOOTSTRAP
 
 @app.get("/api/health")
