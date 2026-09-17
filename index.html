@@ -154,11 +154,13 @@
         <div class="fld"><label>upstream broker (real)</label><input id="pxup" value="192.168.30.32:9092"/></div>
         <div class="fld"><label>listen port</label><input id="pxport" value="9099" style="min-width:80px"/></div>
         <div class="fld"><label>advertise host (blank=auto)</label><input id="pxadv" value="" placeholder="this host's IP" style="min-width:140px"/></div>
+        <div class="fld"><label>capture on error</label><select id="pxcap"><option value="off">off</option><option value="frames">frames only</option><option value="pcap">frames + pcap</option></select></div>
         <button type="button" class="write" onclick="proxyStart()">start relay</button>
         <button type="button" onclick="proxyStop()">stop</button>
         <button type="button" onclick="proxyStatus()">status</button>
         <button type="button" onclick="openProxyLog()" title="Open the persisted decoded proxy log in a new browser window">open log ↗</button>
         <button type="button" onclick="proxyStats()" title="Per-topic produce stats since the relay started">stats</button>
+        <button type="button" onclick="proxyCaptures()" title="List/download captures saved when a handshake or produce error occurred">captures</button>
       </div>
       <div id="pxstatus" class="hint" style="margin-top:6px">relay stopped.</div>
       <div id="pxfeed" style="margin-top:8px;max-height:280px;overflow:auto;background:#0a1119;border:1px solid var(--line);border-radius:8px;padding:10px;font:11.5px/1.5 var(--mono);white-space:pre-wrap"></div>
@@ -255,6 +257,7 @@ async function proxyStart(){
  try{
   const body={upstream:$('pxup').value.trim(), listen_port:parseInt($('pxport').value)||9099};
   const adv=$('pxadv').value.trim(); if(adv){ body.advertise_host=adv; }
+  const cap=$('pxcap').value; if(cap!=='off'){ body.capture_on_error=true; if(cap==='pcap') body.pcap=true; }
   const r=await fetch('/api/proxy/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   const j=await r.json();
   proxyRenderStatus(j.status||{}, j.ok?'started':('start failed: '+(j.error||'')));
@@ -342,6 +345,25 @@ function openProxyLog(){
   }
   refresh();
   const timer = w.setInterval(()=>{ if(w.closed){ w.clearInterval(timer); return; } if(w.document.getElementById('auto') && w.document.getElementById('auto').checked) refresh(); }, 2000);
+}
+
+async function proxyCaptures(){
+ try{
+  const r=await fetch('/api/proxy/captures'); const j=await r.json();
+  const caps=j.captures||[];
+  let out='CAPTURES ON ERROR ('+caps.length+')  dir='+(j.dir||'-')+'\n'+'\u2500'.repeat(66)+'\n';
+  if(!caps.length){ out+='(none yet — enable "capture on error" when starting the relay; a capture is saved automatically when a handshake/produce error is seen)'; }
+  else{
+    for(const c of caps){
+      out+=new Date(c.t*1000).toLocaleTimeString()+'  '+c.reason+'\n';
+      if(c.frames_file) out+='    frames: '+location.origin+'/api/proxy/capture?file='+encodeURIComponent(c.frames_file)+'\n';
+      if(c.pcap_file)   out+='    pcap:   '+location.origin+'/api/proxy/capture?file='+encodeURIComponent(c.pcap_file)+'  (open in Wireshark)\n';
+      if(c.pcap_error)  out+='    pcap error: '+c.pcap_error+'\n';
+    }
+    out+='\n(click a frames link to view; pcap links download for Wireshark)';
+  }
+  setOut(out);
+ }catch(e){ setOut('captures failed: '+e); }
 }
 
 function proxyRenderStatus(st, note){

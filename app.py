@@ -232,7 +232,10 @@ def api_proxy_start(payload: dict = Body(default={})):
     upstream = payload.get("upstream") or DEFAULT_BOOTSTRAP
     listen_port = int(payload.get("listen_port", 9099))
     advertise_host = payload.get("advertise_host") or _self_host()
-    r = kdproxy.start_proxy(listen_port, upstream, advertise_host)
+    capture_on_error = bool(payload.get("capture_on_error", False))
+    pcap = bool(payload.get("pcap", False))
+    r = kdproxy.start_proxy(listen_port, upstream, advertise_host,
+                            capture_on_error=capture_on_error, pcap=pcap)
     _audit(f"PROXY start listen={listen_port} upstream={upstream} advertise={advertise_host} ok={r.get('ok')}")
     return r
 
@@ -246,6 +249,22 @@ def api_proxy_stop():
 def api_proxy_stats():
     """Per-topic produce stats since the relay started."""
     return kdproxy.proxy_stats()
+
+@app.get("/api/proxy/captures")
+def api_proxy_captures():
+    return kdproxy.proxy_captures()
+
+@app.get("/api/proxy/capture")
+def api_proxy_capture(file: str):
+    import os
+    from fastapi.responses import FileResponse
+    base = kdproxy.proxy_capture_dir()
+    safe = os.path.basename(file)
+    path = os.path.join(base, safe)
+    if not os.path.isfile(path):
+        return {"ok": False, "error": "not found", "file": safe}
+    media = "application/vnd.tcpdump.pcap" if safe.endswith(".pcap") else "text/plain"
+    return FileResponse(path, media_type=media, filename=safe)
 
 @app.get("/api/proxy/status")
 def api_proxy_status():

@@ -90,6 +90,48 @@ class Proxy:
         self.running = False; self.started_at = None; self.conns = 0
         self.pending = {}
         self.stats = {}   # topic -> {produce_req, produce_ok, produce_err, bytes, last_err, last_t}
+        # --- capture-on-error ---
+        self.capture_on_error = False       # toggled via start payload
+        self.pcap_enabled = False           # real tcpdump (needs NET_RAW + tcpdump)
+        self.capture_dir = os.environ.get("KD_CAPTURE_DIR", "/data/captures")
+        self.frame_ring = collections.deque(maxlen=120)  # recent (dir,api,ver,corr,bytes) frames
+        self.captures = []                  # list of saved capture metadata
+        self._tcpdump_proc = None
+        self._tcpdump_ring = None
+
+    def _ring(self, direction, summary, raw):
+        self.frame_ring.append({"t": round(time.time(),3), "dir": direction,
+                                "summary": summary, "hex": raw[:256].hex()})
+
+    def _trigger_capture(self, reason):
+        if not self.capture_on_error:
+            return
+        try:
+            os.makedirs(self.capture_dir, exist_ok=True)
+            ts = time.strftime("%Y%m%d-%H%M%S")
+            safe = "".join(c if c.isalnum() else "_" for c in reason)[:40]
+            # A) always: dump recent decoded frames (Kafka-layer, no privilege)
+            fpath = os.path.join(self.capture_dir, f"{ts}_{safe}.frames.txt")
+            with open(fpath, "w") as f:
+                f.write(f"# capture trigger: {reason}  at {ts}\n")
+                f.write(f"# listen={self.listen_port} upstream={self.up_host}:{self.up_port}\n\n")
+                for e in list(self.frame_ring):
+                    f.write(f"{e['t']}  {e['dir']:4} {e['summary']}\n    hex: {e['hex']}\n")
+            meta = {"t": round(time.time(),3), "reason": reason, "frames_file": os.path.basename(fpath)}
+            # B) optional: snapshot the rolling tcpdump ring (real pcap) if enabled
+            if self.pcap_enabled and self._tcpdump_ring:
+                try:
+                    import shutil
+                    ppath = os.path.join(self.capture_dir, f"{ts}_{safe}.pcap")
+                    shutil.copy(self._tcpdump_ring, ppath)
+                    meta["pcap_file"] = os.path.basename(ppath)
+                except Exception as e:
+                    meta["pcap_error"] = str(e)
+            self.captures.append(meta)
+            self.log("*", "capture", f"captured on error: {reason} -> {meta.get('frames_file')}"
+                     + (f" + {meta.get('pcap_file')}" if meta.get('pcap_file') else ""))
+        except Exception as e:
+            self.log("*", "error", f"capture failed: {e}")
 
     def _bump(self, topic, field, n=1):
         d = self.stats.setdefault(topic, {"produce_req":0,"produce_ok":0,"produce_err":0,
@@ -120,6 +162,7 @@ class Proxy:
             name = API_NAMES.get(api, f"api{api}")
             self.pending[corr] = (name, ver, time.time(), client)
             detail = f"{name} v{ver} corr={corr} client={cid or '-'} ({len(frame)}B)"
+            self._ring("C\u2192B", f"{name} v{ver} corr={corr}", frame)
             if api == 0:
                 pinfo = self._peek_produce_req(frame, i, ver)
                 detail += pinfo
@@ -204,6 +247,8 @@ class Proxy:
                     else:
                         self._bump(t, "produce_err")
                         d = self.stats.setdefault(t, {}); d.setdefault("errors",{}); d["errors"][e]=d["errors"].get(e,0)+1
+                        self._trigger_capture(f"produce_error_{e}_{t}")
+            self._ring("B\u2192C", f"{name} v{ver} corr={corr}{detail[detail.find('  err='):] if '  err=' in detail else ''}", frame)
             self.log("B\u2192C", name, detail)
         except Exception as e:
             self.log("B\u2192C","resp",f"(undecoded {len(frame)}B: {e})")
@@ -376,6 +421,9 @@ class Proxy:
                 if not data: break
                 for kind, payload in fr.feed(data):
                     if kind == "FRAME": self._decode_request(payload, client)
+                    elif kind == "RAW":
+                        self._ring("C\u2192B", f"RAW/undecoded {len(payload)}B (protocol mismatch?)", payload)
+                        self._trigger_capture("raw_frame_client_to_broker")
                 usock.sendall(data)
         except Exception: pass
         finally:
@@ -419,6 +467,7 @@ class Proxy:
             usock = socket.create_connection((self.up_host, self.up_port), timeout=10)
         except Exception as e:
             self.log("*","error",f"upstream connect failed: {e}")
+            self._trigger_capture(f"upstream_connect_failed_{e.__class__.__name__}")
             try: csock.close()
             except Exception: pass
             return
@@ -442,14 +491,37 @@ class Proxy:
                 try: self._srv.close()
                 except Exception: pass
 
+    def _start_tcpdump(self):
+        """Rolling pcap of the relay's own traffic. Needs tcpdump + NET_RAW.
+        Writes a single rotating file we snapshot on error."""
+        import shutil, subprocess
+        if not shutil.which("tcpdump"):
+            self.log("*","error","pcap requested but tcpdump not installed in image"); return
+        try:
+            os.makedirs(self.capture_dir, exist_ok=True)
+            self._tcpdump_ring = os.path.join(self.capture_dir, "rolling.pcap")
+            flt = f"tcp port {self.listen_port} or tcp port {self.up_port}"
+            # -C 5 (5MB) -W 1 keeps one small rolling file; -U flush per packet
+            self._tcpdump_proc = subprocess.Popen(
+                ["tcpdump","-i","any","-p","-U","-s","0","-w",self._tcpdump_ring, flt],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            self.log("*","pcap",f"rolling tcpdump started ({flt}) -> {self._tcpdump_ring}")
+        except Exception as e:
+            self.log("*","error",f"tcpdump start failed: {e}"); self._tcpdump_ring=None
+
     def start(self):
         if self.running: return False
         self.running = True; self.started_at = time.time()
+        if self.pcap_enabled:
+            self._start_tcpdump()
         self._thread = threading.Thread(target=self._serve, daemon=True); self._thread.start()
         return True
 
     def stop(self):
         self.running = False
+        if self._tcpdump_proc:
+            try: self._tcpdump_proc.terminate()
+            except Exception: pass
         if self._srv:
             try: self._srv.close()
             except Exception: pass
@@ -468,19 +540,23 @@ class Proxy:
         return {"running": self.running, "listen_port": self.listen_port,
                 "upstream": f"{self.up_host}:{self.up_port}", "advertise_host": self.adv_host,
                 "connections": self.conns,
+                "capture_on_error": self.capture_on_error, "pcap_enabled": self.pcap_enabled,
+                "captures": len(self.captures),
                 "uptime_s": round(time.time()-self.started_at,1) if self.started_at else 0}
 
 
 _proxy = None
 _plock = threading.Lock()
 
-def start_proxy(listen_port, upstream, advertise_host):
+def start_proxy(listen_port, upstream, advertise_host, capture_on_error=False, pcap=False):
     global _proxy
     uh, _, up = upstream.partition(":")
     with _plock:
         if _proxy and _proxy.running:
             return {"ok": False, "error": "proxy already running", "status": _proxy.status()}
         _proxy = Proxy(listen_port, uh, up or "9092", advertise_host)
+        _proxy.capture_on_error = bool(capture_on_error)
+        _proxy.pcap_enabled = bool(pcap)
         ok = _proxy.start(); time.sleep(0.3)
         return {"ok": ok, "status": _proxy.status()}
 
@@ -499,6 +575,13 @@ def proxy_events(since=0.0):
 
 def proxy_stats():
     return _proxy.stats_report() if _proxy else {"since": None, "topics": []}
+
+def proxy_captures():
+    if not _proxy: return {"captures": [], "dir": None}
+    return {"captures": list(_proxy.captures), "dir": _proxy.capture_dir}
+
+def proxy_capture_dir():
+    return _proxy.capture_dir if _proxy else os.environ.get("KD_CAPTURE_DIR", "/data/captures")
 
 def proxy_logfile_path():
     return _proxy.logfile if _proxy else os.environ.get("KD_PROXY_LOG", "/data/proxy-feed.log")

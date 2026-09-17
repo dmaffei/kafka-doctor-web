@@ -5,7 +5,7 @@ WORKDIR /app
 # System deps for python-snappy (C extension needs libsnappy + a compiler).
 # lz4 and zstandard ship manylinux wheels and need no system packages.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends gcc libsnappy-dev \
+ && apt-get install -y --no-install-recommends gcc libsnappy-dev tcpdump \
  && rm -rf /var/lib/apt/lists/*
 
 # Python deps:
