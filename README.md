@@ -101,6 +101,13 @@ changes require a rebuild — a plain restart won't pick them up.
 - **Topic names are case-sensitive**: OMNIS topics are lowercase with dots
   (`omnis.dns`, not `OMNIS.dns`). When a topic looks empty, check the lowercase
   name — `trace` on both is the fastest tell.
+- **Diagnostics for "no data in topic":**
+  - **check case** (`/api/topiccheck?topic=...`) — finds same-name/different-case
+    topics and shows which case actually holds the data (the omnis.dns vs
+    OMNIS.dns trap), flagging a case-mismatch with record counts.
+  - **tcp probe** (`/api/connectprobe`) — classifies a raw TCP failure as
+    *refused* (nothing listening) vs *timeout* (firewall DROP / broken return
+    path), pointing straight at the fix.
 - **Write tests** (audited to `data/kafka-doctor-web.log`):
   - **produce-test** — one record to a test topic.
   - **codec** — compression round-trip for a single selected codec
@@ -119,11 +126,43 @@ curl -XPOST http://host:8899/api/codec -H 'Content-Type: application/json' \
      -d '{"bootstrap":"192.168.30.32:9092","codecs":"zstd"}'
 ```
 
+### Kafka relay / proxy — watch the end-to-end exchange
+Point a producer's `bootstrap.servers` at the proxy to see the live Kafka
+conversation decoded (connection *and* message transfer). Handles the flexible
+v9+/v12 protocol modern clients (e.g. kafka-clients 4.2) use; rewrites the
+broker's advertised address to route produce/fetch through the proxy.
+
+Start it in the UI (relay section) or via REST:
+```
+curl -XPOST http://host:8899/api/proxy/start -H 'Content-Type: application/json' \
+     -d '{"upstream":"192.168.30.32:9092","listen_port":9099}'      # advertise_host optional (auto)
+# point the streamer at  host:9099 ...
+curl "http://host:8899/api/proxy/events?format=text"    # decoded feed (text)
+curl "http://host:8899/api/proxy/stats"                 # per-topic produce req/ok/err/bytes/codec
+curl "http://host:8899/api/proxy/logfile?tail=500"      # persisted feed (survives restarts)
+curl -XPOST http://host:8899/api/proxy/stop
+```
+
+The feed decodes ApiVersions, Metadata (advertised brokers + topic list with
+partition counts and topic-level errors), Produce/Fetch (topic, partition, acks,
+**compression codec**, and response error code), plus per-message latency/size.
+The "open log" button opens the feed in a new window with **all / handshake /
+transfer** filters — so you can isolate whether an issue is in the handshake or
+the message transfer. This distinguishes: never-connected, connected-but-stalls-
+at-metadata, bad-advertised-address, produce-attempted-but-rejected (error code),
+and never-produced (no Produce frames).
+
+Scope: single upstream broker, plaintext. Record payloads are Avro (Schema
+Registry) — the proxy decodes the envelope, not the Avro business fields.
+
 ### Endpoints
 Read (GET): `/api/connect /api/health /api/discover /api/auth /api/topic
 /api/trace /api/freshness /api/config /api/size /api/consume /api/poison
-/api/groups /api/lag /api/meta /api/log`
+/api/groups /api/lag /api/topiccheck /api/connectprobe /api/meta /api/log`
 Write (POST, audited): `/api/produce-test /api/simulate /api/codec`
+Relay/proxy: `POST /api/proxy/start` `POST /api/proxy/stop` `GET /api/proxy/status`
+`GET /api/proxy/events[?format=text&since=...]` `GET /api/proxy/stats`
+`GET /api/proxy/logfile[?tail=N]`
 
 ---
 
