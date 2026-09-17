@@ -242,28 +242,57 @@ async function proxyStatus(){
  catch(e){ $('pxstatus').textContent='status error: '+e; }
 }
 function openProxyLog(){
-  // open the persisted proxy feed in a new window; auto-refreshes every 2s
-  const w = window.open('', 'kdproxylog', 'width=900,height=600,scrollbars=yes');
-  if(!w){ $('pxstatus').textContent='popup blocked — allow popups for this site'; return; }
+  const w = window.open('', 'kdproxylog', 'width=960,height=620,scrollbars=yes');
+  if(!w){ $('pxstatus').textContent='popup blocked \u2014 allow popups for this site'; return; }
   const base = location.origin;
   w.document.write('<!doctype html><title>Kafka proxy log</title>'+
     '<style>body{background:#0a1119;color:#e6edf3;font:12px ui-monospace,Menlo,Consolas,monospace;margin:0;padding:12px;white-space:pre-wrap}'+
-    'h3{color:#6ec546;font-family:system-ui;margin:0 0 8px} .bar{position:sticky;top:0;background:#0a1119;padding-bottom:8px}'+
-    'label{color:#8aa0b4;font-family:system-ui;font-size:12px}</style>'+
-    '<div class="bar"><h3>Kafka proxy — decoded feed</h3>'+
-    '<label><input type="checkbox" id="auto" checked> auto-refresh (2s)</label> '+
-    '<label style="margin-left:12px"><input type="radio" name="src" value="logfile" checked> persisted logfile</label> '+
-    '<label><input type="radio" name="src" value="live"> live buffer</label></div>'+
+    'h3{color:#6ec546;font-family:system-ui;margin:0 0 8px} .bar{position:sticky;top:0;background:#0a1119;padding-bottom:8px;border-bottom:1px solid #243447;margin-bottom:8px}'+
+    'label{color:#8aa0b4;font-family:system-ui;font-size:12px} '+
+    'button{background:#16212e;border:1px solid #243447;color:#e6edf3;border-radius:6px;padding:4px 10px;font-size:12px;cursor:pointer;margin-right:4px}'+
+    'button.on{background:#4f9e2f;border-color:#4f9e2f;color:#fff}</style>'+
+    '<div class="bar"><h3>Kafka proxy \u2014 decoded feed</h3>'+
+    '<span style="font-family:system-ui;color:#8aa0b4;font-size:11px;margin-right:8px">filter:</span>'+
+    '<button id="f_all" class="on" onclick="setF(\'all\')">all</button>'+
+    '<button id="f_hs" onclick="setF(\'hs\')">handshake</button>'+
+    '<button id="f_tx" onclick="setF(\'tx\')">transfer</button>'+
+    '<span style="margin-left:14px"><label><input type="checkbox" id="auto" checked> auto-refresh (2s)</label></span>'+
+    '<span style="margin-left:14px"><label><input type="radio" name="src" value="logfile" checked> logfile</label> '+
+    '<label><input type="radio" name="src" value="live"> live buffer</label></span></div>'+
     '<div id="body">loading...</div>');
   w.document.close();
+  // handshake vs transfer classification by message kind
+  w._filter = 'all';
+  w.setF = function(f){
+    w._filter = f;
+    for(const id of ['f_all','f_hs','f_tx']){ const b=w.document.getElementById(id); if(b) b.className=''; }
+    const on = f==='all'?'f_all':(f==='hs'?'f_hs':'f_tx'); const el=w.document.getElementById(on); if(el) el.className='on';
+    render();
+  };
+  const HS = ['ApiVersions','Metadata','FindCoordinator','connect','listen','error','stop','JoinGroup','Heartbeat','OffsetFetch','OffsetCommit'];
+  const TX = ['Produce','Fetch'];
+  function classify(line){
+    // line format: "<t>  <dir> <kind> <detail>"; kind is the 3rd whitespace token
+    const parts = line.trim().split(/\s+/);
+    const kind = parts[2] || '';
+    if(TX.includes(kind)) return 'tx';
+    return 'hs';   // connection/coordination phase (default)
+  }
+  let _raw = '';
+  function render(){
+    const lines = _raw.split('\n').filter(Boolean);
+    let out = lines;
+    if(w._filter!=='all'){ out = lines.filter(l=>classify(l)===w._filter); }
+    const body = w.document.getElementById('body');
+    body.textContent = out.length ? out.join('\n') : '(no '+(w._filter==='tx'?'transfer':(w._filter==='hs'?'handshake':''))+' events)';
+    w.scrollTo(0, w.document.body.scrollHeight);
+  }
   async function refresh(){
     try{
       const src = [...w.document.getElementsByName('src')].find(r=>r.checked).value;
-      const url = src==='live' ? base+'/api/proxy/events?format=text' : base+'/api/proxy/logfile?tail=1000';
-      const r = await fetch(url); const t = await r.text();
-      w.document.getElementById('body').textContent = t || '(empty)';
-      w.scrollTo(0, w.document.body.scrollHeight);
-    }catch(e){ if(w.document.getElementById('body')) w.document.getElementById('body').textContent='fetch error: '+e; }
+      const url = src==='live' ? base+'/api/proxy/events?format=text' : base+'/api/proxy/logfile?tail=2000';
+      const r = await fetch(url); _raw = await r.text(); render();
+    }catch(e){ const b=w.document.getElementById('body'); if(b) b.textContent='fetch error: '+e; }
   }
   refresh();
   const timer = w.setInterval(()=>{ if(w.closed){ w.clearInterval(timer); return; } if(w.document.getElementById('auto') && w.document.getElementById('auto').checked) refresh(); }, 2000);
