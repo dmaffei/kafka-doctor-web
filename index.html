@@ -62,10 +62,10 @@
   <div class="grp">
     <h2>Connectivity &amp; firewall path</h2>
     <div class="btns">
-      <button class="primary" onclick="run('connect')">connect (stage-by-stage)</button>
-      <button onclick="run('health')">health</button>
-      <button onclick="run('discover')">discover</button>
-      <button onclick="run('auth')">auth</button>
+      <button type="button" class="primary" onclick="run('connect')">connect (stage-by-stage)</button>
+      <button type="button" onclick="run('health')">health</button>
+      <button type="button" onclick="run('discover')">discover</button>
+      <button type="button" onclick="run('auth')">auth</button>
     </div>
   </div>
 
@@ -76,13 +76,13 @@
       <div class="fld"><label>max (consume/poison)</label><input id="max" value="5" style="min-width:90px"/></div>
     </div>
     <div class="btns">
-      <button onclick="run('trace',{topic:1})">trace</button>
-      <button onclick="run('freshness',{topic:1})">freshness</button>
-      <button onclick="run('topic',{topic:1})">topic</button>
-      <button onclick="run('config',{topic:1})">config</button>
-      <button onclick="run('size',{topic:1})">size</button>
-      <button onclick="run('consume',{topic:1,max:1})">consume</button>
-      <button onclick="run('poison',{topic:1,max:1})">poison</button>
+      <button type="button" onclick="run('trace',{topic:1})">trace</button>
+      <button type="button" onclick="run('freshness',{topic:1})">freshness</button>
+      <button type="button" onclick="run('topic',{topic:1})">topic</button>
+      <button type="button" onclick="run('config',{topic:1})">config</button>
+      <button type="button" onclick="run('size',{topic:1})">size</button>
+      <button type="button" onclick="run('consume',{topic:1,max:1})">consume</button>
+      <button type="button" onclick="run('poison',{topic:1,max:1})">poison</button>
     </div>
   </div>
 
@@ -92,8 +92,8 @@
       <div class="fld"><label>group (for lag)</label><input id="group" value="clickhouse_dns_consumer"/></div>
     </div>
     <div class="btns">
-      <button onclick="run('groups')">groups</button>
-      <button onclick="run('lag',{group:1})">lag</button>
+      <button type="button" onclick="run('groups')">groups</button>
+      <button type="button" onclick="run('lag',{group:1})">lag</button>
     </div>
   </div>
 
@@ -103,13 +103,13 @@
       <div class="note">⚠ Writes real records. produce-test → one record to a test topic. simulate → N AI-Streamer-format records to a *-test topic.</div>
       <div class="row">
         <div class="fld"><label>produce-test topic</label><input id="ptopic" value="kafkadoctor_test"/></div>
-        <button class="write" onclick="write('produce-test')">produce-test</button>
+        <button type="button" class="write" onclick="write('produce-test')">produce-test</button>
       </div>
       <div class="row">
         <div class="fld"><label>simulate topic (must end -test)</label><input id="stopic" value="OMNIS.assets-test"/></div>
         <div class="fld"><label>count</label><input id="count" value="50" style="min-width:80px"/></div>
         <div class="fld"><label>rate/s (0=burst)</label><input id="rate" value="0" style="min-width:80px"/></div>
-        <button class="write" onclick="write('simulate')">simulate</button>
+        <button type="button" class="write" onclick="write('simulate')">simulate</button>
       </div>
     </div>
   </div>
@@ -140,16 +140,16 @@ async function run(cmd, needs){
 }
 
 async function write(cmd){
+ try{
   const body = {bootstrap: decodeURIComponent(bs()), tls: tls()==='true'};
   if(cmd==='produce-test'){ body.topic=$('ptopic').value.trim(); }
   else { body.topic=$('stopic').value.trim(); body.count=parseInt($('count').value)||50; body.rate=parseInt($('rate').value)||0; }
-  if(!confirm(`This will WRITE to Kafka via ${cmd} on topic "${body.topic}". Continue?`)) return;
-  setOut('running '+cmd+' (writing) …');
-  try{
-    const r = await fetch(`/api/${cmd}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-    const j = await r.json();
-    render(cmd,j);
-  }catch(e){ setOut('request failed: '+e); }
+  if(!confirm('This will WRITE to Kafka via '+cmd+' on topic "'+body.topic+'". Continue?')) return;
+  setOut('running '+cmd+' (writing) ...');
+  const r = await fetch('/api/'+cmd,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const j = await r.json();
+  render(cmd,j);
+ }catch(e){ setOut('write failed: '+e); }
 }
 
 function render(cmd,j){
