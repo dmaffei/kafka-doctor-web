@@ -144,7 +144,6 @@ async function write(cmd){
   const body = {bootstrap: decodeURIComponent(bs()), tls: tls()==='true'};
   if(cmd==='produce-test'){ body.topic=$('ptopic').value.trim(); }
   else { body.topic=$('stopic').value.trim(); body.count=parseInt($('count').value)||50; body.rate=parseInt($('rate').value)||0; }
-  if(!confirm('This will WRITE to Kafka via '+cmd+' on topic "'+body.topic+'". Continue?')) return;
   setOut('running '+cmd+' (writing) ...');
   const r = await fetch('/api/'+cmd,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   const j = await r.json();
