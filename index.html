@@ -249,9 +249,9 @@ async function proxyStats(){
   let out='PROXY PER-TOPIC STATS'+(j.since?('  (since '+new Date(j.since*1000).toLocaleTimeString()+')'):'')+'\n'+'\u2500'.repeat(66)+'\n';
   if(!rows.length){ out+='(no produce traffic seen yet — start the relay and route a producer through it)'; }
   else{
-    out+='topic'.padEnd(34)+'req'.padStart(7)+'ok'.padStart(7)+'err'.padStart(6)+'  KB\n';
+    out+='topic'.padEnd(34)+'req'.padStart(7)+'ok'.padStart(7)+'err'.padStart(6)+'  codec'.padEnd(8)+'   KB\n';
     for(const t of rows){
-      out+=(t.topic||'').slice(0,33).padEnd(34)+String(t.produce_req).padStart(7)+String(t.produce_ok).padStart(7)+String(t.produce_err).padStart(6)+'  '+(t.bytes/1024).toFixed(1)+'\n';
+      out+=(t.topic||'').slice(0,33).padEnd(34)+String(t.produce_req).padStart(7)+String(t.produce_ok).padStart(7)+String(t.produce_err).padStart(6)+'  '+String(t.codec||'-').padEnd(8)+'  '+(t.bytes/1024).toFixed(1)+'\n';
       const errs=Object.entries(t.errors||{}); if(errs.length){ out+='    errors: '+errs.map(e=>e[0]+'='+e[1]).join(', ')+'\n'; }
     }
   }

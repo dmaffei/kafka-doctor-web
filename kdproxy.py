@@ -10,6 +10,21 @@ ERR = {0:"NONE",-1:"UNKNOWN",3:"UNKNOWN_TOPIC_OR_PARTITION",5:"LEADER_NOT_AVAILA
        10:"MESSAGE_TOO_LARGE",13:"NETWORK_EXCEPTION",15:"COORDINATOR_NOT_AVAILABLE",
        37:"INVALID_PARTITIONS",56:"KAFKA_STORAGE_ERROR",75:"UNKNOWN_TOPIC_ID"}
 
+CODEC_NAMES = {0:"none",1:"gzip",2:"snappy",3:"lz4",4:"zstd"}
+
+def _batch_codec(b, i):
+    """Given index i at the start of a RecordBatch, return codec name from the
+    attributes field. Layout: baseOffset(8) batchLen(4) leaderEpoch(4) magic(1)
+    crc(4) attributes(2). codec = attributes & 0x07."""
+    try:
+        magic = b[i+16]
+        if magic < 2:
+            return None  # legacy message set; skip
+        attrs, = struct.unpack_from(">h", b, i+21)
+        return CODEC_NAMES.get(attrs & 0x07, str(attrs & 0x07))
+    except Exception:
+        return None
+
 def _is_flex_md(ver): return ver >= 9
 def _is_flex_prod(ver): return ver >= 9
 
@@ -112,6 +127,9 @@ class Proxy:
                 m = _re.search(r"first='([^']*)'", pinfo)
                 if m:
                     self._bump(m.group(1), "produce_req"); self._bump(m.group(1), "bytes", len(frame))
+                    mc = _re.search(r"codec=(\S+)", pinfo)
+                    if mc:
+                        d = self.stats.setdefault(m.group(1), {}); d["codec"] = mc.group(1)
             self.log("C\u2192B", name, detail)
         except Exception as e:
             self.log("C\u2192B", "req", f"(undecoded {len(frame)}B: {e})")
@@ -128,7 +146,18 @@ class Proxy:
                 ntop, j = _read_uvarint(b, j); ntop -= 1
                 if ntop > 0:
                     tname, j = _read_compact_string(b, j)
-                    return f"  acks={acks} topics={ntop} first='{tname}'"
+                    codec = None
+                    try:
+                        npar, j = _read_uvarint(b, j); npar -= 1
+                        if npar > 0:
+                            _idx, = struct.unpack_from(">i", b, j); j += 4
+                            rlen1, j = _read_uvarint(b, j)   # compact bytes len+1
+                            if rlen1 > 1:
+                                codec = _batch_codec(b, j)
+                    except Exception:
+                        pass
+                    cstr = f" codec={codec}" if codec else ""
+                    return f"  acks={acks} topics={ntop} first='{tname}'{cstr}"
             else:
                 if ver >= 3:
                     _tx, j = _read_string(b, j)
@@ -137,7 +166,18 @@ class Proxy:
                 ntop, = struct.unpack_from(">i", b, j); j += 4
                 if ntop > 0:
                     tname, j = _read_string(b, j)
-                    return f"  acks={acks} topics={ntop} first='{tname}'"
+                    codec = None
+                    try:
+                        npar, = struct.unpack_from(">i", b, j); j += 4
+                        if npar > 0:
+                            _idx, = struct.unpack_from(">i", b, j); j += 4
+                            rlen, = struct.unpack_from(">i", b, j); j += 4
+                            if rlen > 0:
+                                codec = _batch_codec(b, j)
+                    except Exception:
+                        pass
+                    cstr = f" codec={codec}" if codec else ""
+                    return f"  acks={acks} topics={ntop} first='{tname}'{cstr}"
         except Exception:
             pass
         return ""
@@ -420,8 +460,8 @@ class Proxy:
         for t, d in sorted(self.stats.items()):
             rows.append({"topic": t, "produce_req": d.get("produce_req",0),
                          "produce_ok": d.get("produce_ok",0), "produce_err": d.get("produce_err",0),
-                         "bytes": d.get("bytes",0), "errors": d.get("errors",{}),
-                         "last_t": d.get("last_t",0)})
+                         "bytes": d.get("bytes",0), "codec": d.get("codec","-"),
+                         "errors": d.get("errors",{}), "last_t": d.get("last_t",0)})
         return {"since": self.started_at, "topics": rows}
 
     def status(self):
