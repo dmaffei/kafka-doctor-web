@@ -129,6 +129,7 @@
         <button type="button" class="write" onclick="proxyStart()">start relay</button>
         <button type="button" onclick="proxyStop()">stop</button>
         <button type="button" onclick="proxyStatus()">status</button>
+        <button type="button" onclick="openProxyLog()" title="Open the persisted decoded proxy log in a new browser window">open log ↗</button>
       </div>
       <div id="pxstatus" class="hint" style="margin-top:6px">relay stopped.</div>
       <div id="pxfeed" style="margin-top:8px;max-height:280px;overflow:auto;background:#0a1119;border:1px solid var(--line);border-radius:8px;padding:10px;font:11.5px/1.5 var(--mono);white-space:pre-wrap"></div>
@@ -240,6 +241,34 @@ async function proxyStatus(){
  try{ const r=await fetch('/api/proxy/status'); const j=await r.json(); proxyRenderStatus(j,''); }
  catch(e){ $('pxstatus').textContent='status error: '+e; }
 }
+function openProxyLog(){
+  // open the persisted proxy feed in a new window; auto-refreshes every 2s
+  const w = window.open('', 'kdproxylog', 'width=900,height=600,scrollbars=yes');
+  if(!w){ $('pxstatus').textContent='popup blocked — allow popups for this site'; return; }
+  const base = location.origin;
+  w.document.write('<!doctype html><title>Kafka proxy log</title>'+
+    '<style>body{background:#0a1119;color:#e6edf3;font:12px ui-monospace,Menlo,Consolas,monospace;margin:0;padding:12px;white-space:pre-wrap}'+
+    'h3{color:#6ec546;font-family:system-ui;margin:0 0 8px} .bar{position:sticky;top:0;background:#0a1119;padding-bottom:8px}'+
+    'label{color:#8aa0b4;font-family:system-ui;font-size:12px}</style>'+
+    '<div class="bar"><h3>Kafka proxy — decoded feed</h3>'+
+    '<label><input type="checkbox" id="auto" checked> auto-refresh (2s)</label> '+
+    '<label style="margin-left:12px"><input type="radio" name="src" value="logfile" checked> persisted logfile</label> '+
+    '<label><input type="radio" name="src" value="live"> live buffer</label></div>'+
+    '<div id="body">loading...</div>');
+  w.document.close();
+  async function refresh(){
+    try{
+      const src = [...w.document.getElementsByName('src')].find(r=>r.checked).value;
+      const url = src==='live' ? base+'/api/proxy/events?format=text' : base+'/api/proxy/logfile?tail=1000';
+      const r = await fetch(url); const t = await r.text();
+      w.document.getElementById('body').textContent = t || '(empty)';
+      w.scrollTo(0, w.document.body.scrollHeight);
+    }catch(e){ if(w.document.getElementById('body')) w.document.getElementById('body').textContent='fetch error: '+e; }
+  }
+  refresh();
+  const timer = w.setInterval(()=>{ if(w.closed){ w.clearInterval(timer); return; } if(w.document.getElementById('auto') && w.document.getElementById('auto').checked) refresh(); }, 2000);
+}
+
 function proxyRenderStatus(st, note){
  const s=st.running?('RUNNING  :'+st.listen_port+' → '+st.upstream+'  (advertise '+st.advertise_host+')  conns='+st.connections+'  up '+st.uptime_s+'s'):'stopped';
  $('pxstatus').textContent=(note?note+'  —  ':'')+s;
