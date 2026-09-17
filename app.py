@@ -31,8 +31,8 @@ TIMEOUT = os.environ.get("KD_TIMEOUT", "8")
 LOG_PATH = os.environ.get("KD_LOG", "/data/kafka-doctor-web.log")
 
 READ_CMDS = {"discover", "health", "connect", "config", "lag", "freshness",
-             "groups", "poison", "trace", "topic", "consume", "size", "codec", "auth"}
-WRITE_CMDS = {"produce-test", "simulate"}
+             "groups", "poison", "trace", "topic", "consume", "size", "auth"}
+WRITE_CMDS = {"produce-test", "simulate", "codec"}
 
 app = FastAPI(title="kafka-doctor-web", version="1.0")
 
@@ -177,6 +177,23 @@ def api_simulate(payload: dict = Body(default={})):
     tls = bool(payload.get("tls", False))
     return run_doctor("simulate", bootstrap,
                       ["--topic", topic, "--count", count, "--rate", rate], tls=tls)
+
+@app.post("/api/codec")
+def api_codec(payload: dict = Body(default={})):
+    """Round-trip each compression codec end-to-end via a throwaway topic.
+    Writes records, so it is audited like other write ops."""
+    bootstrap = _bootstrap(payload.get("bootstrap"))
+    tls = bool(payload.get("tls", False))
+    extra = []
+    codecs = payload.get("codecs")            # optional: e.g. "gzip,lz4,snappy,zstd"
+    if codecs:
+        extra += ["--codecs", str(codecs)]
+    topic = payload.get("topic")              # optional throwaway topic name
+    if topic:
+        extra += ["--topic", str(topic)]
+    if payload.get("force"):
+        extra += ["--force"]
+    return run_doctor("codec", bootstrap, extra or None, tls=tls)
 
 
 @app.get("/api/log", response_class=PlainTextResponse)

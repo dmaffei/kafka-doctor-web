@@ -111,6 +111,10 @@
         <div class="fld"><label>rate/s (0=burst)</label><input id="rate" value="0" style="min-width:80px"/></div>
         <button type="button" class="write" onclick="runWrite('simulate')">simulate</button>
       </div>
+      <div class="row">
+        <div class="fld"><label>codec test — codecs (blank=all)</label><input id="codecs" value="gzip,lz4,snappy,zstd"/></div>
+        <button type="button" class="write" onclick="runCodec()">codec round-trip</button>
+      </div>
     </div>
   </div>
 
@@ -149,6 +153,17 @@ async function runWrite(cmd){
   const j = await r.json();
   render(cmd,j);
  }catch(e){ setOut('write failed: '+e); }
+}
+
+async function runCodec(){
+ try{
+  const body = {bootstrap: decodeURIComponent(bs()), tls: tls()==='true'};
+  const c = $('codecs').value.trim(); if(c){ body.codecs = c; }
+  setOut('running codec round-trip (writes to a throwaway topic) ...');
+  const r = await fetch('/api/codec',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const j = await r.json();
+  render('codec',j);
+ }catch(e){ setOut('codec failed: '+e); }
 }
 
 function render(cmd,j){
