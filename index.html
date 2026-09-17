@@ -104,7 +104,7 @@
       <div class="row">
         <div class="fld"><label>produce-test topic</label><input id="ptopic" value="kafkadoctor_test"/></div>
         <button type="button" class="write" onclick="runWrite('produce-test')">produce-test</button>
-        <div class="fld" style="margin-left:14px"><label>codec</label><select id="codecs" style="min-width:110px"><option value="gzip">gzip</option><option value="lz4">lz4</option><option value="snappy">snappy</option><option value="zstd">zstd</option></select></div>
+        <div class="fld" style="margin-left:14px"><label>codec</label><select id="codecs" style="min-width:110px"><option value="none">none (uncompressed)</option><option value="gzip">gzip</option><option value="lz4">lz4</option><option value="snappy">snappy</option><option value="zstd">zstd</option></select></div>
         <button type="button" class="write" onclick="runCodec()">codec</button>
       </div>
       <div class="row">
