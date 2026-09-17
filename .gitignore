@@ -1,0 +1,6 @@
+*.tar.gz
+*.zip
+__pycache__/
+*.pyc
+data/
+kafka_doctor.json

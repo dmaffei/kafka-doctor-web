@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Kafka Doctor — Web</title>
+<style>
+  :root{--bg:#0f1720;--panel:#16212e;--ink:#e6edf3;--mut:#8aa0b4;--acc:#6ec546;--accd:#4f9e2f;--warn:#e0a030;--err:#e0574a;--line:#243447;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  header{padding:16px 20px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  header h1{font-size:18px;margin:0;font-weight:700}
+  header h1 .k{color:var(--acc)}
+  .sub{color:var(--mut);font-size:12px}
+  main{max-width:1100px;margin:0 auto;padding:20px}
+  .bar{display:flex;gap:10px;align-items:end;flex-wrap:wrap;background:var(--panel);padding:14px;border:1px solid var(--line);border-radius:10px;margin-bottom:16px}
+  .fld{display:flex;flex-direction:column;gap:4px}
+  .fld label{font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.04em}
+  input,select{background:#0d1622;border:1px solid var(--line);color:var(--ink);border-radius:7px;padding:8px 10px;font:13px var(--mono);min-width:180px}
+  input:focus,select:focus{outline:none;border-color:var(--acc)}
+  .grp{margin-bottom:16px}
+  .grp h2{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--mut);margin:0 0 8px;font-weight:700}
+  .btns{display:flex;gap:8px;flex-wrap:wrap}
+  button{background:var(--panel);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:9px 14px;font-size:13px;cursor:pointer;transition:.12s}
+  button:hover{border-color:var(--acc);color:#fff}
+  button.primary{background:var(--accd);border-color:var(--accd);font-weight:600}
+  button.primary:hover{background:var(--acc)}
+  button.write{border-color:var(--warn);color:var(--warn)}
+  button.write:hover{background:var(--warn);color:#0d1622}
+  .write-zone{border:1px dashed var(--warn);border-radius:10px;padding:12px;background:rgba(224,160,48,.05)}
+  .write-zone .note{color:var(--warn);font-size:12px;margin-bottom:8px}
+  #out{background:#0a1119;border:1px solid var(--line);border-radius:10px;padding:14px;margin-top:16px;min-height:160px;white-space:pre-wrap;font:12.5px/1.5 var(--mono);overflow:auto}
+  .status{display:inline-block;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:700;margin-left:8px}
+  .s-ok{background:rgba(110,197,70,.15);color:var(--acc)}
+  .s-fail{background:rgba(224,87,74,.15);color:var(--err)}
+  .s-run{background:rgba(224,160,48,.15);color:var(--warn)}
+  .row{display:flex;gap:8px;align-items:end;flex-wrap:wrap;margin-bottom:8px}
+  a.tab{color:var(--mut);cursor:pointer;font-size:12px;margin-left:auto}
+  a.tab:hover{color:var(--acc)}
+  .hint{color:var(--mut);font-size:11px;margin-top:4px}
+</style>
+</head>
+<body>
+<header>
+  <h1><span class="k">kafka</span>-doctor <span style="color:var(--mut);font-weight:400">web</span></h1>
+  <span class="sub">test Kafka connectivity &amp; produce/consume from this host</span>
+  <a class="tab" onclick="showLog()">view write log →</a>
+</header>
+<main>
+  <div class="bar">
+    <div class="fld" style="flex:1">
+      <label>Kafka bootstrap (host:port)</label>
+      <input id="bootstrap" value="__DEFAULT_BOOTSTRAP__" placeholder="192.168.30.32:9092" style="width:100%"/>
+      <div class="hint">This is the host you are validating the path TO. Tests originate from <b>this container's host</b>.</div>
+    </div>
+    <div class="fld">
+      <label>TLS</label>
+      <select id="tls"><option value="false">plaintext</option><option value="true">TLS</option></select>
+    </div>
+  </div>
+
+  <div class="grp">
+    <h2>Connectivity &amp; firewall path</h2>
+    <div class="btns">
+      <button class="primary" onclick="run('connect')">connect (stage-by-stage)</button>
+      <button onclick="run('health')">health</button>
+      <button onclick="run('discover')">discover</button>
+      <button onclick="run('auth')">auth</button>
+    </div>
+  </div>
+
+  <div class="grp">
+    <h2>Topic inspection (read)</h2>
+    <div class="row">
+      <div class="fld"><label>topic</label><input id="topic" value="omnis.dns" placeholder="omnis.dns (lowercase!)"/></div>
+      <div class="fld"><label>max (consume/poison)</label><input id="max" value="5" style="min-width:90px"/></div>
+    </div>
+    <div class="btns">
+      <button onclick="run('trace',{topic:1})">trace</button>
+      <button onclick="run('freshness',{topic:1})">freshness</button>
+      <button onclick="run('topic',{topic:1})">topic</button>
+      <button onclick="run('config',{topic:1})">config</button>
+      <button onclick="run('size',{topic:1})">size</button>
+      <button onclick="run('consume',{topic:1,max:1})">consume</button>
+      <button onclick="run('poison',{topic:1,max:1})">poison</button>
+    </div>
+  </div>
+
+  <div class="grp">
+    <h2>Consumer groups (read)</h2>
+    <div class="row">
+      <div class="fld"><label>group (for lag)</label><input id="group" value="clickhouse_dns_consumer"/></div>
+    </div>
+    <div class="btns">
+      <button onclick="run('groups')">groups</button>
+      <button onclick="run('lag',{group:1})">lag</button>
+    </div>
+  </div>
+
+  <div class="grp">
+    <h2>Write tests <span class="sub">— these WRITE to Kafka and are logged</span></h2>
+    <div class="write-zone">
+      <div class="note">⚠ Writes real records. produce-test → one record to a test topic. simulate → N AI-Streamer-format records to a *-test topic.</div>
+      <div class="row">
+        <div class="fld"><label>produce-test topic</label><input id="ptopic" value="kafkadoctor_test"/></div>
+        <button class="write" onclick="write('produce-test')">produce-test</button>
+      </div>
+      <div class="row">
+        <div class="fld"><label>simulate topic (must end -test)</label><input id="stopic" value="OMNIS.assets-test"/></div>
+        <div class="fld"><label>count</label><input id="count" value="50" style="min-width:80px"/></div>
+        <div class="fld"><label>rate/s (0=burst)</label><input id="rate" value="0" style="min-width:80px"/></div>
+        <button class="write" onclick="write('simulate')">simulate</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="out">Ready. Enter a bootstrap and click a check.
+Tip: for firewall validation, run <b>connect</b> first — it walks DNS → TCP → handshake → metadata → advertised-broker, and shows exactly which stage fails.</div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+function bs(){return encodeURIComponent($('bootstrap').value.trim());}
+function tls(){return $('tls').value;}
+function setOut(txt,cls){const o=$('out');o.textContent=txt;o.scrollTop=0;}
+function stat(s){return `<span class="status s-${s}">${s}</span>`;}
+
+async function run(cmd, needs){
+  needs = needs||{};
+  let qs = `bootstrap=${bs()}&tls=${tls()}`;
+  if(needs.topic){ const t=$('topic').value.trim(); if(!t){return setOut('topic required');} qs+=`&topic=${encodeURIComponent(t)}`;}
+  if(needs.group){ const g=$('group').value.trim(); if(!g){return setOut('group required');} qs+=`&group=${encodeURIComponent(g)}`;}
+  if(needs.max){ qs+=`&max=${encodeURIComponent($('max').value.trim()||'5')}`;}
+  setOut('running '+cmd+' …');
+  try{
+    const r = await fetch(`/api/${cmd}?${qs}`);
+    const j = await r.json();
+    render(cmd,j);
+  }catch(e){ setOut('request failed: '+e); }
+}
+
+async function write(cmd){
+  const body = {bootstrap: decodeURIComponent(bs()), tls: tls()==='true'};
+  if(cmd==='produce-test'){ body.topic=$('ptopic').value.trim(); }
+  else { body.topic=$('stopic').value.trim(); body.count=parseInt($('count').value)||50; body.rate=parseInt($('rate').value)||0; }
+  if(!confirm(`This will WRITE to Kafka via ${cmd} on topic "${body.topic}". Continue?`)) return;
+  setOut('running '+cmd+' (writing) …');
+  try{
+    const r = await fetch(`/api/${cmd}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const j = await r.json();
+    render(cmd,j);
+  }catch(e){ setOut('request failed: '+e); }
+}
+
+function render(cmd,j){
+  const ok = j.ok ? 'ok':'fail';
+  let head = `${cmd}  ${j.ok?'✓ OK':'✗ FAIL'}   bootstrap=${j.bootstrap||''}   ${j.duration_s||0}s   exit=${j.exit_code}\n`;
+  head += '─'.repeat(60)+'\n';
+  let body;
+  if(j.result!==null && j.result!==undefined){ body = JSON.stringify(j.result,null,2); }
+  else if(j.text){ body = j.text; }
+  else { body = JSON.stringify(j,null,2); }
+  if(j.stderr){ body += '\n\n[stderr]\n'+j.stderr; }
+  if(j.parse_error){ body += '\n\n[parse_error] '+j.parse_error; }
+  setOut(head+body);
+}
+
+async function showLog(){
+  setOut('loading write log …');
+  try{ const r=await fetch('/api/log?tail=200'); setOut('WRITE AUDIT LOG (last 200)\n'+'─'.repeat(60)+'\n'+await r.text()); }
+  catch(e){ setOut('log fetch failed: '+e); }
+}
+</script>
+</body>
+</html>
