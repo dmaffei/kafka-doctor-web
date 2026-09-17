@@ -23,6 +23,7 @@ import json, os, re, shlex, subprocess, time, datetime, pathlib
 from typing import Optional
 from fastapi import FastAPI, Query, Body
 from fastapi.responses import HTMLResponse, PlainTextResponse
+import kdx
 
 DOCTOR = os.environ.get("KD_DOCTOR", "/app/kafka_doctor.py")
 PORT = int(os.environ.get("KD_PORT", "8899"))
@@ -195,6 +196,24 @@ def api_codec(payload: dict = Body(default={})):
         extra += ["--force"]
     return run_doctor("codec", bootstrap, extra or None, tls=tls)
 
+
+@app.get("/api/topiccheck")
+def api_topiccheck(topic: str, bootstrap: str = Query(None), tls: bool = False):
+    """Case-variant detection: find same-name/different-case topics and show
+    which case actually holds the data (the omnis.dns vs OMNIS.dns trap)."""
+    try:
+        return kdx.topic_variants(_bootstrap(bootstrap), topic, tls=tls)
+    except Exception as e:
+        return {"ok": False, "error": str(e), "queried_topic": topic}
+
+@app.get("/api/connectprobe")
+def api_connectprobe(bootstrap: str = Query(None)):
+    """Raw TCP probe that classifies failure as refused vs timeout — points at
+    'nothing listening' vs 'firewall/return-path'."""
+    try:
+        return kdx.connect_probe(_bootstrap(bootstrap))
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
 
 @app.get("/api/log", response_class=PlainTextResponse)
 def api_log(tail: int = 200):

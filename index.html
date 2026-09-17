@@ -66,6 +66,7 @@
       <button type="button" onclick="run('health')">health</button>
       <button type="button" onclick="run('discover')">discover</button>
       <button type="button" onclick="run('auth')">auth</button>
+      <button type="button" onclick="connectProbe()" title="Raw TCP probe: classifies timeout (firewall/return-path) vs refused (nothing listening)">tcp probe</button>
     </div>
   </div>
 
@@ -83,6 +84,7 @@
       <button type="button" onclick="run('size',{topic:1})">size</button>
       <button type="button" onclick="run('consume',{topic:1,max:1})">consume</button>
       <button type="button" onclick="run('poison',{topic:1,max:1})">poison</button>
+      <button type="button" onclick="topicCheck()" title="Find same-name/different-case topics and show which case has the data">check case</button>
     </div>
   </div>
 
@@ -162,6 +164,30 @@ async function runCodec(){
   const j = await r.json();
   render('codec',j);
  }catch(e){ setOut('codec failed: '+e); }
+}
+
+async function topicCheck(){
+ try{
+  const t=$('topic').value.trim(); if(!t){return setOut('topic required');}
+  setOut('checking case-variants of '+t+' ...');
+  const r=await fetch('/api/topiccheck?bootstrap='+bs()+'&tls='+tls()+'&topic='+encodeURIComponent(t));
+  const j=await r.json();
+  let head='check case  '+(j.severity||'')+'   topic='+(j.queried_topic||'')+'\n'+'\u2500'.repeat(60)+'\n';
+  let body=(j.verdict||'')+'\n\n';
+  if(j.variants){ body+='variants found:\n'; for(const v of j.variants){ body+='  '+v.topic+'  ->  '+v.records+' records'+(v.exact_match?'  (exact match)':'')+'\n'; } }
+  if(j.error){ body+='error: '+j.error; }
+  setOut(head+body);
+ }catch(e){ setOut('topic check failed: '+e); }
+}
+
+async function connectProbe(){
+ try{
+  setOut('probing TCP path ...');
+  const r=await fetch('/api/connectprobe?bootstrap='+bs());
+  const j=await r.json();
+  let head='tcp probe  '+(j.ok?'\u2713 reachable':'\u2717 '+(j.failure||'failed'))+'   '+(j.bootstrap||'')+'   '+(j.duration_s||0)+'s\n'+'\u2500'.repeat(60)+'\n';
+  setOut(head+(j.verdict||JSON.stringify(j,null,2)));
+ }catch(e){ setOut('probe failed: '+e); }
 }
 
 function render(cmd,j){

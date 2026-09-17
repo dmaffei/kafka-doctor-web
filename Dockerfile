@@ -19,6 +19,7 @@ RUN pip install --no-cache-dir \
 # Baked-in doctor + web wrapper (portable: does not depend on host copy)
 COPY kafka_doctor.py /app/kafka_doctor.py
 COPY app.py          /app/app.py
+COPY kdx.py          /app/kdx.py
 COPY index.html      /app/index.html
 
 ENV KD_PORT=8899 \
