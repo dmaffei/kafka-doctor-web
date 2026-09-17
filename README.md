@@ -54,6 +54,10 @@ sudo firewall-cmd --zone=public --list-ports   # confirm 8899/tcp
 
 Then open `http://<host>:8899/`.
 
+To enable the relay's optional **pcap** capture-on-error (real packets for
+Wireshark), add `--cap-add=NET_RAW` to the `docker run` command. Frames-mode
+capture works without it.
+
 ---
 
 ## Deploy offline (air-gapped host)
@@ -152,6 +156,27 @@ the message transfer. This distinguishes: never-connected, connected-but-stalls-
 at-metadata, bad-advertised-address, produce-attempted-but-rejected (error code),
 and never-produced (no Produce frames).
 
+**Capture on error:** enable "capture on error" when starting the relay (UI
+selector or `capture_on_error: true` / `pcap: true` in the start payload). When
+the proxy detects a handshake/produce error — upstream connect failure, a
+RAW/undecoded frame (protocol or TLS mismatch), or a non-NONE Produce response
+(MESSAGE_TOO_LARGE, LEADER_NOT_AVAILABLE, UNKNOWN_TOPIC_OR_PARTITION, ...) — it
+saves a capture automatically to `/data/captures/`:
+- **frames** mode (no privilege): the recent decoded + hex Kafka frames around
+  the error (the full ApiVersions/Metadata/Produce sequence). View in the
+  browser or via REST.
+- **frames + pcap** mode: also snapshots a rolling `tcpdump` of the relay's
+  traffic to a `.pcap` for Wireshark. Requires running the container with
+  `--cap-add=NET_RAW` (tcpdump is already in the image); without it, frames are
+  still captured and the pcap step reports it can't get raw access.
+
+List/download captures with the **captures** button, or:
+```
+curl "http://host:8899/api/proxy/captures"                       # list
+curl "http://host:8899/api/proxy/capture?file=<name>.frames.txt" # view frames
+curl -O "http://host:8899/api/proxy/capture?file=<name>.pcap"    # download pcap -> Wireshark
+```
+
 Scope: single upstream broker, plaintext. Record payloads are Avro (Schema
 Registry) — the proxy decodes the envelope, not the Avro business fields.
 
@@ -162,7 +187,7 @@ Read (GET): `/api/connect /api/health /api/discover /api/auth /api/topic
 Write (POST, audited): `/api/produce-test /api/simulate /api/codec`
 Relay/proxy: `POST /api/proxy/start` `POST /api/proxy/stop` `GET /api/proxy/status`
 `GET /api/proxy/events[?format=text&since=...]` `GET /api/proxy/stats`
-`GET /api/proxy/logfile[?tail=N]`
+`GET /api/proxy/logfile[?tail=N]` `GET /api/proxy/captures` `GET /api/proxy/capture?file=...`
 
 ---
 
