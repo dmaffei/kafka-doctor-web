@@ -242,6 +242,11 @@ def api_proxy_stop():
     _audit("PROXY stop")
     return r
 
+@app.get("/api/proxy/stats")
+def api_proxy_stats():
+    """Per-topic produce stats since the relay started."""
+    return kdproxy.proxy_stats()
+
 @app.get("/api/proxy/status")
 def api_proxy_status():
     return kdproxy.proxy_status()

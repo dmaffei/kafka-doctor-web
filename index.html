@@ -130,6 +130,7 @@
         <button type="button" onclick="proxyStop()">stop</button>
         <button type="button" onclick="proxyStatus()">status</button>
         <button type="button" onclick="openProxyLog()" title="Open the persisted decoded proxy log in a new browser window">open log ↗</button>
+        <button type="button" onclick="proxyStats()" title="Per-topic produce stats since the relay started">stats</button>
       </div>
       <div id="pxstatus" class="hint" style="margin-top:6px">relay stopped.</div>
       <div id="pxfeed" style="margin-top:8px;max-height:280px;overflow:auto;background:#0a1119;border:1px solid var(--line);border-radius:8px;padding:10px;font:11.5px/1.5 var(--mono);white-space:pre-wrap"></div>
@@ -241,6 +242,23 @@ async function proxyStatus(){
  try{ const r=await fetch('/api/proxy/status'); const j=await r.json(); proxyRenderStatus(j,''); }
  catch(e){ $('pxstatus').textContent='status error: '+e; }
 }
+async function proxyStats(){
+ try{
+  const r=await fetch('/api/proxy/stats'); const j=await r.json();
+  const rows=j.topics||[];
+  let out='PROXY PER-TOPIC STATS'+(j.since?('  (since '+new Date(j.since*1000).toLocaleTimeString()+')'):'')+'\n'+'\u2500'.repeat(66)+'\n';
+  if(!rows.length){ out+='(no produce traffic seen yet — start the relay and route a producer through it)'; }
+  else{
+    out+='topic'.padEnd(34)+'req'.padStart(7)+'ok'.padStart(7)+'err'.padStart(6)+'  KB\n';
+    for(const t of rows){
+      out+=(t.topic||'').slice(0,33).padEnd(34)+String(t.produce_req).padStart(7)+String(t.produce_ok).padStart(7)+String(t.produce_err).padStart(6)+'  '+(t.bytes/1024).toFixed(1)+'\n';
+      const errs=Object.entries(t.errors||{}); if(errs.length){ out+='    errors: '+errs.map(e=>e[0]+'='+e[1]).join(', ')+'\n'; }
+    }
+  }
+  setOut(out);
+ }catch(e){ setOut('stats failed: '+e); }
+}
+
 function openProxyLog(){
   const w = window.open('', 'kdproxylog', 'width=960,height=620,scrollbars=yes');
   if(!w){ $('pxstatus').textContent='popup blocked \u2014 allow popups for this site'; return; }

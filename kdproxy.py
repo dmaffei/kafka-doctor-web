@@ -74,6 +74,13 @@ class Proxy:
         self._srv = None; self._thread = None
         self.running = False; self.started_at = None; self.conns = 0
         self.pending = {}
+        self.stats = {}   # topic -> {produce_req, produce_ok, produce_err, bytes, last_err, last_t}
+
+    def _bump(self, topic, field, n=1):
+        d = self.stats.setdefault(topic, {"produce_req":0,"produce_ok":0,"produce_err":0,
+                                          "bytes":0,"errors":{},"last_t":0})
+        d[field] = d.get(field,0) + n
+        d["last_t"] = round(time.time(),3)
 
     def log(self, direction, kind, detail):
         ev = {"t": round(time.time(),3), "dir": direction, "kind": kind, "detail": detail}
@@ -99,7 +106,12 @@ class Proxy:
             self.pending[corr] = (name, ver, time.time(), client)
             detail = f"{name} v{ver} corr={corr} client={cid or '-'} ({len(frame)}B)"
             if api == 0:
-                detail += self._peek_produce_req(frame, i, ver)
+                pinfo = self._peek_produce_req(frame, i, ver)
+                detail += pinfo
+                import re as _re
+                m = _re.search(r"first='([^']*)'", pinfo)
+                if m:
+                    self._bump(m.group(1), "produce_req"); self._bump(m.group(1), "bytes", len(frame))
             self.log("C\u2192B", name, detail)
         except Exception as e:
             self.log("C\u2192B", "req", f"(undecoded {len(frame)}B: {e})")
@@ -142,7 +154,16 @@ class Proxy:
             if name == "Metadata":
                 detail += self._peek_metadata(frame, ver)
             elif name == "Produce":
-                detail += self._peek_produce_resp(frame, ver)
+                pr = self._peek_produce_resp(frame, ver)
+                detail += pr
+                import re as _re
+                mt = _re.search(r"topic='([^']*)'", pr); me = _re.search(r"err=(\S+)", pr)
+                if mt:
+                    t = mt.group(1); e = me.group(1) if me else "?"
+                    if e == "NONE": self._bump(t, "produce_ok")
+                    else:
+                        self._bump(t, "produce_err")
+                        d = self.stats.setdefault(t, {}); d.setdefault("errors",{}); d["errors"][e]=d["errors"].get(e,0)+1
             self.log("B\u2192C", name, detail)
         except Exception as e:
             self.log("B\u2192C","resp",f"(undecoded {len(frame)}B: {e})")
@@ -152,8 +173,8 @@ class Proxy:
             i = 4
             if _is_flex_md(ver):
                 i = _skip_tagged_fields(b, i)
-                if ver >= 3: i += 4
-                nb, i = _read_uvarint(b, i); nb -= 1
+                if ver >= 3: i += 4                      # throttle
+                nb, i = _read_uvarint(b, i); nb -= 1     # brokers (compact array)
                 adv = []
                 for _ in range(nb):
                     _nid, = struct.unpack_from(">i", b, i); i += 4
@@ -162,7 +183,31 @@ class Proxy:
                     _rack, i = _read_compact_string(b, i)
                     i = _skip_tagged_fields(b, i)
                     adv.append(f"{host}:{port}")
-                return "  advertises=[" + ", ".join(adv) + "]"
+                # cluster_id (compact nullable), controller_id(4)
+                _cid, i = _read_compact_string(b, i)
+                i += 4
+                nt, i = _read_uvarint(b, i); nt -= 1     # topics (compact array)
+                topics = []
+                for _ in range(nt):
+                    terr, = struct.unpack_from(">h", b, i); i += 2
+                    tname, i = _read_compact_string(b, i)
+                    if ver >= 10: i += 16                 # topic_id (uuid)
+                    _internal = b[i]; i += 1
+                    npart, i = _read_uvarint(b, i); npart -= 1
+                    # skip partitions block (varies); we only need counts here.
+                    # Each partition (v9+): err(2) idx(4) leader(4) leader_epoch(4)
+                    #   replicas(compact arr of i32) isr(compact) offline(compact) tagged
+                    for _ in range(npart):
+                        i += 2 + 4 + 4
+                        if ver >= 7: i += 4               # leader_epoch
+                        for _arr in range(3):
+                            an, i = _read_uvarint(b, i); an -= 1
+                            i += an * 4
+                        i = _skip_tagged_fields(b, i)
+                    if ver >= 8: i = _skip_tagged_fields(b, i)  # topic_authorized_operations sometimes; then tagged
+                    i = _skip_tagged_fields(b, i)
+                    topics.append((tname, npart, terr))
+                return self._fmt_md(adv, topics)
             else:
                 if ver >= 3: i += 4
                 nb, = struct.unpack_from(">i", b, i); i += 4
@@ -174,11 +219,42 @@ class Proxy:
                     if ver >= 1:
                         _rack, i = _read_string(b, i)
                     adv.append(f"{host}:{port}")
-                return "  advertises=[" + ", ".join(adv) + "]"
+                if ver >= 2:
+                    _cid, i = _read_string(b, i)          # cluster_id
+                if ver >= 1:
+                    i += 4                                # controller_id
+                nt, = struct.unpack_from(">i", b, i); i += 4
+                topics = []
+                for _ in range(nt):
+                    terr, = struct.unpack_from(">h", b, i); i += 2
+                    tname, i = _read_string(b, i)
+                    if ver >= 1: i += 1                   # is_internal
+                    npart, = struct.unpack_from(">i", b, i); i += 4
+                    for _ in range(npart):
+                        i += 2 + 4 + 4                    # err, idx, leader
+                        if ver >= 7: i += 4
+                        rn, = struct.unpack_from(">i", b, i); i += 4; i += rn*4
+                        isn, = struct.unpack_from(">i", b, i); i += 4; i += isn*4
+                        if ver >= 5:
+                            on, = struct.unpack_from(">i", b, i); i += 4; i += on*4
+                    topics.append((tname, npart, terr))
+                return self._fmt_md(adv, topics)
         except Exception as e:
-            return f"  (advertised parse skipped: {e})"
+            return f"  advertises parsed; topics skipped ({e})"
+
+    def _fmt_md(self, adv, topics):
+        out = "  advertises=[" + ", ".join(adv) + "]"
+        if topics:
+            shown = []
+            for (name, np, err) in topics[:12]:
+                tag = "" if err == 0 else f"!{ERR.get(err, err)}"
+                shown.append(f"{name}({np}p{tag})")
+            more = f" +{len(topics)-12} more" if len(topics) > 12 else ""
+            out += "  topics=" + str(len(topics)) + " [" + ", ".join(shown) + more + "]"
+        return out
 
     def _peek_produce_resp(self, b, ver):
+
         try:
             i = 4
             if _is_flex_prod(ver):
@@ -339,6 +415,15 @@ class Proxy:
             except Exception: pass
         self.log("*","stop","proxy stopped"); return True
 
+    def stats_report(self):
+        rows = []
+        for t, d in sorted(self.stats.items()):
+            rows.append({"topic": t, "produce_req": d.get("produce_req",0),
+                         "produce_ok": d.get("produce_ok",0), "produce_err": d.get("produce_err",0),
+                         "bytes": d.get("bytes",0), "errors": d.get("errors",{}),
+                         "last_t": d.get("last_t",0)})
+        return {"since": self.started_at, "topics": rows}
+
     def status(self):
         return {"running": self.running, "listen_port": self.listen_port,
                 "upstream": f"{self.up_host}:{self.up_port}", "advertise_host": self.adv_host,
@@ -371,6 +456,9 @@ def proxy_status():
 
 def proxy_events(since=0.0):
     return _proxy.snapshot(since) if _proxy else []
+
+def proxy_stats():
+    return _proxy.stats_report() if _proxy else {"since": None, "topics": []}
 
 def proxy_logfile_path():
     return _proxy.logfile if _proxy else os.environ.get("KD_PROXY_LOG", "/data/proxy-feed.log")
